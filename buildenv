@@ -1,5 +1,5 @@
 # bump: trivy-version /TRIVY_VERSION="(.*)"/ https://github.com/aquasecurity/trivy.git|semver:*
-TRIVY_VERSION="0.70.0"
+TRIVY_VERSION="0.60.0"
 
 ###
 ### Build control file for the trivy port
@@ -11,116 +11,175 @@ TRIVY_VERSION="0.70.0"
 export ZOPEN_PROJECT_NAME="trivy"
 export ZOPEN_BUILD_LINE="STABLE"
 export ZOPEN_STABLE_URL="https://github.com/aquasecurity/trivy.git"
-export ZOPEN_STABLE_TAG="v0.70.0"
-export ZOPEN_STABLE_DEPS="check_go git make"
+export ZOPEN_STABLE_DEPS="make coreutils wharf git gettext sqlite check_clang"
+export ZOPEN_STABLE_TAG="v${TRIVY_VERSION}"
+
 export ZOPEN_DEV_URL=""
-export ZOPEN_DEV_DEPS="check_go git make"
+export ZOPEN_DEV_DEPS=""
+
 export ZOPEN_CATEGORIES="security devops"
 export ZOPEN_RUNTIME_DEPS=""
-# export ZOPEN_SYSTEM_PREREQ="zos25" # optional system pre-req (default=zos25)
+export ZOPEN_SYSTEM_PREREQ=""
 
+export ZOPEN_COMP="GO"
 
 ###
-### Build settings (Port type: BUILD, Build system: GNU Make)
+### Build stage control environment variables
 ###
-### Optional Settings for GNU Make build system (Autotools)
-#export ZOPEN_EXTRA_CONFIGURE_OPTS="--with-ssl" # Add any additional configure options here
-#export ZOPEN_EXTRA_CFLAGS="-mzos-target=zosv2r5" # Add any additional compiler options here
+export ZOPEN_CONFIGURE="skip"
+export ZOPEN_MAKE="go"
+export ZOPEN_MAKE_OPTS="build -ldflags=-s\ -w\ -X=github.com/aquasecurity/trivy/pkg/version/app.ver=${TRIVY_VERSION} ./cmd/trivy"
+export ZOPEN_MAKE_MINIMAL="yes"
+export ZOPEN_CHECK="skip"
+export ZOPEN_INSTALL="zopen_install"
+export ZOPEN_CLEAN="zopen_clean"
 
+zopen_init()
+{
+  # Keep CC and CXX for building SQLite binding in zopen_wharf
+  # unset CC CXX
+  export CGO_ENABLED=1
+}
+
+zopen_pre_configure()
+{
+set -x
+  cd ..
+  # Clone go-sqlite3 if it doesn't exist (like murexport does)
+  if [ ! -d "../go-sqlite3" ]; then
+    cd ..
+    git clone https://github.com/mattn/go-sqlite3.git
+    cd go-sqlite3
+  else
+    cd go-sqlite3
+  fi
+  
+  # Compile sqlite3-binding.c as shared library with z/OS flags
+  ${CC:-clang} -shared -fvisibility=default -o sqlite3-binding.so sqlite3-binding.c \
+    -DPATH_MAX=1023 \
+    -D_AE_BIMODAL=1 \
+    -D_ALL_SOURCE \
+    -U_ENHANCED_ASCII_EXT \
+    -D_ENHANCED_ASCII_EXT=0xFFFFFFFF \
+    -D_ISOC99_SOURCE \
+    -D_LARGE_TIME_API \
+    -D_OPEN_MSGQ_EXT \
+    -D_OPEN_SYS_FILE_EXT \
+    -D_OPEN_SYS_SOCK_EXT3 \
+    -D_OPEN_SYS_SOCK_IPV6 \
+    -D_UNIX03_SOURCE \
+    -D_UNIX03_THREADS \
+    -D_UNIX03_WITHDRAWN \
+    -D_XOPEN_SOURCE=600 \
+    -D_XOPEN_SOURCE_EXTENDED \
+    -fasm \
+    -fzos-le-char-mode=ascii \
+    -isystem/usr/include \
+    -m64
+  
+  # Tag the side deck file if it exists
+  if [ -f sqlite3-binding.x ]; then
+    chtag -tc1047 sqlite3-binding.x
+  fi
+  
+  # Replace ZOPEN-REPLACE-DIR placeholder with actual path (like murexport does)
+  GO_SQLITE3_DIR="${PWD}"
+  sed -i "s|ZOPEN-REPLACE-DIR|${GO_SQLITE3_DIR}|g" sqlite3.go
+  
+  # Clone and modify go-rpmdb to use mattn/go-sqlite3
+  cd ..
+  if [ ! -d "go-rpmdb" ]; then
+    git clone https://github.com/knqyf263/go-rpmdb.git
+  fi
+  
+  cd go-rpmdb
+  
+  # Replace glebarez/go-sqlite with mattn/go-sqlite3 in go.mod
+  sed -i 's|github.com/glebarez/go-sqlite v1.20.3|github.com/mattn/go-sqlite3 v1.14.24|g' go.mod
+  
+  # Add blank import for mattn/go-sqlite3 driver registration
+  if ! grep -q "github.com/mattn/go-sqlite3" pkg/sqlite3/sqlite3.go; then
+    sed -i '/import (/a\	_ "github.com/mattn/go-sqlite3"' pkg/sqlite3/sqlite3.go
+  fi
+  
+  # Initialize Go workspace (like murexport does) - this allows local go-sqlite3 and go-rpmdb to be used
+  cd ..
+
+  git clone https://github.com/cheggaaa/pb.git
+  git clone https://github.com/syndtr/goleveldb.git
+  git clone https://github.com/containerd/continuity.git
+  git clone https://github.com/containerd/containerd.git 
+  git clone https://github.com/go-git/go-git/v5.git
+
+  rm -f go.work go.work.sum
+  go work init ./go-sqlite3 ./go-rpmdb ./trivy ./pb ./goleveldb ./continuity ./containerd ./v5 ./trivy
+  
+  # Apply go.mod changes to trivy BEFORE running wharf
+  cd ./trivy
+  
+  # Fix grpc module conflict by excluding the duplicate stats/opentelemetry module
+  if ! grep -q "exclude google.golang.org/grpc/stats/opentelemetry" go.mod; then
+    echo "" >> go.mod
+    echo "// Exclude duplicate grpc stats/opentelemetry module to resolve ambiguous import" >> go.mod
+    echo "exclude google.golang.org/grpc/stats/opentelemetry v0.0.0-20240907200651-3ffb98b2c93a" >> go.mod
+  fi
+  
+  # Add replace directive for local go-rpmdb
+  if ! grep -q "replace github.com/knqyf263/go-rpmdb" go.mod; then
+    echo "" >> go.mod
+    echo "// Replace go-rpmdb with local version that uses mattn/go-sqlite3 instead of glebarez/go-sqlite" >> go.mod
+    echo "replace github.com/knqyf263/go-rpmdb => ../go-rpmdb" >> go.mod
+  fi
+  
+  # Replace modernc.org/sqlite imports with mattn/go-sqlite3 in trivy source files
+  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' cmd/trivy/main.go
+  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' integration/integration_test.go
+  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' pkg/fanal/analyzer/analyzer_test.go
+  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' pkg/fanal/analyzer/language/java/jar/jar_test.go
+  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' pkg/fanal/test/integration/library_test.go
+}
+
+zopen_build()
+{
+  # Run wharf to patch z/OS platform-specific issues in dependencies
+  go mod tidy
+  cd ..
+  wharf ./trivy/...
+  cd ./trivy
+  go mod tidy
+  
+  # Build trivy with CGO enabled
+  go build -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=${TRIVY_VERSION}" ./cmd/trivy
+}
 
 ###
 ### Required user-supplied functions
 ###
-
-zopen_check_results() {
-  dir="$1" 
-  pfx="$2" 
+zopen_check_results()
+{
+  dir="$1"
+  pfx="$2"
   chk="$1/$2_check.log"
-  # Add logic to extract the test results here:
-  echo "actualFailures:0" 
-  echo "totalTests:1" 
+
+  echo "actualFailures:0"
+  echo "totalTests:1"
   echo "expectedFailures:0"
   echo "expectedTotalTests:1"
 }
 
-zopen_get_version() {
-  echo "$TRIVY_VERSION"
+zopen_install()
+{
+  mkdir -p "${ZOPEN_INSTALL_DIR}/bin"
+  cp ./trivy "${ZOPEN_INSTALL_DIR}/bin/"
 }
 
+zopen_get_version()
+{
+  echo "${TRIVY_VERSION}"
+}
 
-###
-### Custom Build Logic (if applicable)
-###
-# For libraries, this hook exports variables for other ports to use.
-#zopen_append_to_env() {
-#  cat <<END
-#if [ ! -z "\$ZOPEN_IN_ZOPEN_BUILD" ]; then
-#  export ZOPEN_EXTRA_CFLAGS="\${ZOPEN_EXTRA_CFLAGS} -I\${PWD}/include"
-#  export ZOPEN_EXTRA_CXXFLAGS="\${ZOPEN_EXTRA_CXXFLAGS} -I\${PWD}/include"
-#  export ZOPEN_EXTRA_LDFLAGS="\${ZOPEN_EXTRA_LDFLAGS} -L\${PWD}/lib"
-#  export ZOPEN_EXTRA_LIBS="\${ZOPEN_EXTRA_LIBS} -ltrivy"
-#fi
-#END
-#}
-
-###
-### Optional User-Supplied Hooks (uncomment to use)
-###
-
-#zopen_append_to_env() {
-#  ## This function runs as part of generation of the .env file. The output of the
-#  ## function is appended to .env.
-#}
-#
-#zopen_append_to_setup(){
-#  ## This function runs as part of generation of the setup.sh file. The output of
-#  ## the function is appended to setup.sh.
-#}
-#
-#zopen_append_to_validate_install(){
-#  ## This function runs as part of generation of the install_test.sh file. The
-#  ## output of the function is appended to install_test.sh script.
-#}
-#
-#zopen_install_caveats(){
-#  ## This function is run post install. All stdout messages are captured and
-#  ## added to the metadata.json as installation caveats.
-#}
-#
-#zopen_init(){
-#  ## This function runs after code is downloaded and patched but before the code
-#  ## is built.
-#}
-#
-#zopen_post_buildenv(){
-#  ## This function runs after the 'buildenv' is processed.
-#}
-#
-#zopen_pre_build(){
-#  ## This function runs before the 'make' step of the build is run.
-#}
-#
-#zopen_pre_check(){
-#  ## This function runs before the 'check' step of the build is run.
-#}
-#
-#zopen_pre_configure(){
-#  ## This function runs before the 'configure' step of the build is run.
-#}
-#
-#zopen_pre_install(){
-#  ## This function runs before the 'install' step of the build is run.
-#}
-#
-#zopen_post_install(){
-#  ## This function runs after the 'install' step of the build is run.
-#}
-#
-#zopen_pre_patch(){
-#  ## This function runs before the 'patch' step of the build is run.
-#}
-#
-#zopen_pre_terminate(){
-#  ## This function runs before 'zopen build' terminates.
-#}
-
+zopen_clean()
+{
+  rm -f ./trivy
+  rm -rf ../.wharf_cache ../wharf_port
+}
