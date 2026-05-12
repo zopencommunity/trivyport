@@ -8,36 +8,46 @@ index 1234567..89abcde 100644
 
  package bbolt
 
+diff --git a/bolt_endian_noop.go b/bolt_endian_noop.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/bolt_endian_noop.go
+@@ -0,0 +1,7 @@
++//go:build !zos
++
++package bbolt
++
++// byteswapPage is a no-op on little-endian platforms; the bbolt file format is
++// natively little-endian.
++func byteswapPage(_ []byte) {}
 diff --git a/bolt_zos.go b/bolt_zos.go
 new file mode 100644
 index 0000000..1234567
 --- /dev/null
 +++ b/bolt_zos.go
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,162 @@
 +//go:build zos
 +
 +package bbolt
 +
 +import (
++	"encoding/binary"
 +	"fmt"
++	"hash/fnv"
 +	"io"
 +	"time"
 +	"unsafe"
 +)
 +
-+// flock acquires an advisory lock on a file descriptor.
-+// z/OS: file locking omitted; vulnerability DB is accessed read-only.
-+func flock(_ *DB, _ bool, _ time.Duration) error {
-+	return nil
-+}
++// flock is a no-op on z/OS; the vulnerability DB is opened read-only.
++func flock(_ *DB, _ bool, _ time.Duration) error { return nil }
 +
-+// funlock releases an advisory lock on a file descriptor.
-+func funlock(_ *DB) error {
-+	return nil
-+}
++// funlock is a no-op on z/OS.
++func funlock(_ *DB) error { return nil }
 +
-+// mmap memory-maps a DB's data file.
-+// z/OS: mmap is unreliable for large files; read the file into heap memory instead.
++// mmap loads the database file into heap memory and byte-swaps all structural
++// integer fields from little-endian (x86 bbolt format) to big-endian (z/OS native).
 +func mmap(db *DB, sz int) error {
 +	if !db.readOnly {
 +		if err := db.file.Truncate(int64(sz)); err != nil {
@@ -45,20 +55,162 @@ index 0000000..1234567
 +		}
 +	}
 +	b := make([]byte, sz)
-+	_, err := db.file.ReadAt(b, 0)
-+	if err != nil && err != io.EOF {
++	if _, err := db.file.ReadAt(b, 0); err != nil && err != io.EOF {
 +		return fmt.Errorf("read error: %w", err)
 +	}
++	byteswapDB(b, db.pageSize)
 +	db.dataref = b
 +	db.data = (*[maxMapSize]byte)(unsafe.Pointer(&b[0]))
 +	db.datasz = sz
 +	return nil
 +}
 +
-+// munmap releases the in-memory database buffer.
++// munmap releases the in-memory buffer.
 +func munmap(db *DB) error {
 +	db.dataref = nil
 +	db.data = nil
 +	db.datasz = 0
 +	return nil
 +}
++
++// byteswapDB walks every page in data and converts its integer fields from
++// little-endian to big-endian in place.
++func byteswapDB(data []byte, pageSize int) {
++	if pageSize <= 0 {
++		pageSize = 4096
++	}
++	for off := 0; off+pageSize <= len(data); off += pageSize {
++		byteswapPage(data[off : off+pageSize])
++	}
++}
++
++// byteswapPage converts the structural integers in one bbolt page from LE to BE.
++// Key/value data in leaf pages is left untouched.
++func byteswapPage(page []byte) {
++	if len(page) < 16 {
++		return
++	}
++	// Read flags and count as little-endian before we overwrite them.
++	flags := binary.LittleEndian.Uint16(page[8:])
++	count := binary.LittleEndian.Uint16(page[10:])
++
++	leSwapU64(page, 0)  // Page.id (Pgid)
++	leSwapU16(page, 8)  // Page.flags
++	leSwapU16(page, 10) // Page.count
++	leSwapU32(page, 12) // Page.overflow
++
++	switch {
++	case flags&0x04 != 0: // MetaPageFlag
++		byteswapMetaData(page)
++	case flags&0x10 != 0: // FreelistPageFlag
++		byteswapFreelistData(page, count)
++	case flags&0x01 != 0: // BranchPageFlag
++		byteswapBranchData(page, count)
++	case flags&0x02 != 0: // LeafPageFlag
++		byteswapLeafData(page, count)
++	}
++}
++
++// byteswapMetaData byte-swaps all Meta struct fields and recomputes the FNV-1a
++// checksum over the now-BE bytes so that Meta.Validate() passes on z/OS.
++func byteswapMetaData(page []byte) {
++	const o = 16 // Meta struct follows the 16-byte page header
++	if len(page) < o+64 {
++		return
++	}
++	leSwapU32(page, o+0)  // magic
++	leSwapU32(page, o+4)  // version
++	leSwapU32(page, o+8)  // pageSize
++	leSwapU32(page, o+12) // flags
++	leSwapU64(page, o+16) // root.root (Pgid)
++	leSwapU64(page, o+24) // root.sequence
++	leSwapU64(page, o+32) // freelist (Pgid)
++	leSwapU64(page, o+40) // pgid (Pgid)
++	leSwapU64(page, o+48) // txid (Txid)
++	// Recompute checksum over the 56 BE bytes before the checksum field.
++	h := fnv.New64a()
++	h.Write(page[o : o+56])
++	binary.BigEndian.PutUint64(page[o+56:], h.Sum64())
++}
++
++func byteswapFreelistData(page []byte, count uint16) {
++	o := 16
++	n := int(count)
++	if n == 0xFFFF {
++		// Overflow: first element is the real count.
++		n = int(binary.LittleEndian.Uint64(page[o:]))
++		leSwapU64(page, o)
++		o += 8
++	}
++	for i := 0; i < n; i++ {
++		if o+8 > len(page) {
++			break
++		}
++		leSwapU64(page, o)
++		o += 8
++	}
++}
++
++func byteswapBranchData(page []byte, count uint16) {
++	o := 16
++	for i := 0; i < int(count); i++ {
++		if o+16 > len(page) {
++			break
++		}
++		leSwapU32(page, o+0) // pos
++		leSwapU32(page, o+4) // ksize
++		leSwapU64(page, o+8) // pgid
++		o += 16
++	}
++}
++
++func byteswapLeafData(page []byte, count uint16) {
++	o := 16
++	for i := 0; i < int(count); i++ {
++		if o+16 > len(page) {
++			break
++		}
++		leSwapU32(page, o+0)  // flags
++		leSwapU32(page, o+4)  // pos
++		leSwapU32(page, o+8)  // ksize
++		leSwapU32(page, o+12) // vsize
++		o += 16
++	}
++}
++
++func leSwapU16(b []byte, off int) {
++	v := binary.LittleEndian.Uint16(b[off:])
++	binary.BigEndian.PutUint16(b[off:], v)
++}
++
++func leSwapU32(b []byte, off int) {
++	v := binary.LittleEndian.Uint32(b[off:])
++	binary.BigEndian.PutUint32(b[off:], v)
++}
++
++func leSwapU64(b []byte, off int) {
++	v := binary.LittleEndian.Uint64(b[off:])
++	binary.BigEndian.PutUint64(b[off:], v)
++}
+diff --git a/db.go b/db.go
+index 1234567..89abcde 100644
+--- a/db.go
++++ b/db.go
+@@ -365,8 +365,9 @@ func (db *DB) getPageSizeFromFirstMeta() (int, bool, error) {
+ 	var buf [0x1000]byte
+ 	var metaCanRead bool
+ 	if bw, err := db.file.ReadAt(buf[:], 0); err == nil && bw == len(buf) {
+ 		metaCanRead = true
++		byteswapPage(buf[:])
+ 		if m := db.pageInBuffer(buf[:], 0).Meta(); m.Validate() == nil {
+ 			return int(m.PageSize()), metaCanRead, nil
+ 		}
+ 	}
+@@ -402,6 +403,7 @@ func (db *DB) getPageSizeFromSecondMeta() (int, bool, error) {
+ 		bw, err := db.file.ReadAt(buf[:], pos)
+ 		if (err == nil && bw == len(buf)) || (err == io.EOF && int64(bw) == (fileSize-pos)) {
+ 			metaCanRead = true
++			byteswapPage(buf[:])
+ 			if m := db.pageInBuffer(buf[:], 0).Meta(); m.Validate() == nil {
+ 				return int(m.PageSize()), metaCanRead, nil
+ 			}
