@@ -26,7 +26,7 @@ new file mode 100644
 index 0000000..1234567
 --- /dev/null
 +++ b/bolt_zos.go
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,165 @@
 +//go:build zos
 +
 +package bbolt
