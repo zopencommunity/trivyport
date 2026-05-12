@@ -1,0 +1,12 @@
+diff --git a/internal/pkg/scan/signals_unix.go b/internal/pkg/scan/signals_unix.go
+index f5d5c04..79822d6 100644
+--- a/internal/pkg/scan/signals_unix.go
++++ b/internal/pkg/scan/signals_unix.go
+@@ -1,5 +1,5 @@
+-//go:build linux || bsd || darwin || freebsd || openbsd
+-// +build linux bsd darwin freebsd openbsd
++//go:build linux || bsd || darwin || freebsd || openbsd || zos
++// +build linux bsd darwin freebsd openbsd zos
+ 
+ package scan
+ 

@@ -1,0 +1,18 @@
+diff --git a/content/local/store_zos.go b/content/local/store_zos.go
+new file mode 100644
+index 0000000..e6efde3
+--- /dev/null
++++ b/content/local/store_zos.go
+@@ -0,0 +1,12 @@
++//go:build zos
++
++package local
++
++import (
++	"os"
++	"time"
++)
++
++func getATime(fi os.FileInfo) time.Time {
++	return fi.ModTime()
++}

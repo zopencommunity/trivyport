@@ -1,0 +1,26 @@
+diff --git a/go.mod b/go.mod
+index 4f7465a..6b7328f 100644
+--- a/go.mod
++++ b/go.mod
+@@ -4,7 +4,7 @@ go 1.18
+ 
+ require (
+-	github.com/glebarez/go-sqlite v1.20.3
++	github.com/mattn/go-sqlite3 v1.14.24
+ 	github.com/hashicorp/go-multierror v1.1.1
+ 	github.com/stretchr/testify v1.7.0
+ 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
+ )
+diff --git a/pkg/sqlite3/sqlite3.go b/pkg/sqlite3/sqlite3.go
+index b7f8f79..bcfe0d2 100644
+--- a/pkg/sqlite3/sqlite3.go
++++ b/pkg/sqlite3/sqlite3.go
+@@ -6,6 +6,8 @@ import (
+ 	"encoding/binary"
+ 	"os"
+ 
++	_ "github.com/mattn/go-sqlite3"
++
+ 	dbi "github.com/knqyf263/go-rpmdb/pkg/db"
+ 	"golang.org/x/xerrors"
+ )

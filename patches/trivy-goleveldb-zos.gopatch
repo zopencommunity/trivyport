@@ -1,0 +1,18 @@
+diff --git a/leveldb/storage/file_storage_unix.go b/leveldb/storage/file_storage_unix.go
+index 52bb063..1452acb 100644
+--- a/leveldb/storage/file_storage_unix.go
++++ b/leveldb/storage/file_storage_unix.go
+@@ -4,11 +4,11 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
+-// +build darwin dragonfly freebsd linux netbsd openbsd
++//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd || zos
++// +build darwin dragonfly freebsd linux netbsd openbsd zos
+ 
+ package storage
+ 
+ import (
+ 	"os"
+ 	"syscall"

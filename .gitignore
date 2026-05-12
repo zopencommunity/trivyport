@@ -4,3 +4,23 @@ log.STABLE/
 build/
 install/
 .zoslib_hooks/
+
+# Source and dependency directories created by zopen-build
+trivy/
+trivy-*/
+go-sqlite3/
+go-rpmdb/
+pb/
+goleveldb/
+continuity/
+containerd-v1/
+containerd-v2/
+go-git/
+grpc/
+squealer/
+go-path/
+go.work
+go.work.sum
+go-tmpdir/
+wharf_port/
+.wharf_cache/

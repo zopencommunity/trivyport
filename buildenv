@@ -5,14 +5,12 @@ TRIVY_VERSION="0.60.0"
 ### Build control file for the trivy port
 ###
 
-###
-### Required Environment Variables
-###
+export ZOPEN_NAME="trivy"
 export ZOPEN_PROJECT_NAME="trivy"
 export ZOPEN_BUILD_LINE="STABLE"
 export ZOPEN_STABLE_URL="https://github.com/aquasecurity/trivy.git"
-export ZOPEN_STABLE_DEPS="make coreutils wharf git gettext sqlite check_clang"
 export ZOPEN_STABLE_TAG="v${TRIVY_VERSION}"
+export ZOPEN_STABLE_DEPS="make coreutils wharf git gettext sqlite check_clang check_go"
 
 export ZOPEN_DEV_URL=""
 export ZOPEN_DEV_DEPS=""
@@ -22,155 +20,205 @@ export ZOPEN_RUNTIME_DEPS=""
 export ZOPEN_SYSTEM_PREREQ=""
 
 export ZOPEN_COMP="GO"
-
-###
-### Build stage control environment variables
-###
-export ZOPEN_CONFIGURE="skip"
-export ZOPEN_MAKE="go"
-export ZOPEN_MAKE_OPTS="build -ldflags=-s\ -w\ -X=github.com/aquasecurity/trivy/pkg/version/app.ver=${TRIVY_VERSION} ./cmd/trivy"
-export ZOPEN_MAKE_MINIMAL="yes"
-export ZOPEN_CHECK="skip"
+export ZOPEN_CONFIGURE="zopen_config"
+export ZOPEN_CONFIGURE_MINIMAL=1
+export ZOPEN_MAKE="skip"
 export ZOPEN_INSTALL="zopen_install"
+export ZOPEN_CHECK="skip"
 export ZOPEN_CLEAN="zopen_clean"
 
 zopen_init()
 {
-  # Keep CC and CXX for building SQLite binding in zopen_wharf
-  # unset CC CXX
+  if [ "$(basename "${PWD}")" = "trivy" ]; then
+    PORT_ROOT="$(cd .. && pwd)"
+  else
+    PORT_ROOT="${PWD}"
+  fi
+
   export CGO_ENABLED=1
+  export GOMAXPROCS=1
+  # Use clang as the C compiler so CGO external linking goes through clang's
+  # driver rather than the raw binder (ld).  Clang on z/OS knows how to set up
+  # SYSDEFSD when linking against DLL side decks (.x files).
+  export CC="${CC:-clang}"
+  export GOPATH="${PORT_ROOT}/go-path"
+  export GOMODCACHE="${GOPATH}/pkg/mod"
+  export GOTMPDIR="${PORT_ROOT}/go-tmpdir"
+  mkdir -p "${GOTMPDIR}" "${GOMODCACHE}"
+
+  if [ -n "${GOROOT:-}" ] && [ -d "${GOROOT}/bin" ]; then
+    export PATH="${PATH}:${GOROOT}/bin"
+  fi
+
+  export GOBIN="${ZOPEN_INSTALL_DIR}/bin"
+  mkdir -p "${GOBIN}"
 }
 
-zopen_pre_configure()
+clone_module()
 {
-set -x
-  cd ..
-  # Clone go-sqlite3 if it doesn't exist (like murexport does)
-  if [ ! -d "../go-sqlite3" ]; then
-    cd ..
-    git clone https://github.com/mattn/go-sqlite3.git
-    cd go-sqlite3
-  else
-    cd go-sqlite3
+  repo="$1"
+  dir="$2"
+  ref="$3"
+
+  if [ ! -d "${dir}/.git" ]; then
+    git clone "${repo}" "${dir}"
   fi
-  
-  # Compile sqlite3-binding.c as shared library with z/OS flags
-  ${CC:-clang} -shared -fvisibility=default -o sqlite3-binding.so sqlite3-binding.c \
+
+  git -C "${dir}" fetch --tags --force
+  git -C "${dir}" checkout --force "${ref}"
+  git -C "${dir}" clean -fdx
+}
+
+apply_port_patch()
+{
+  dir="$1"
+  patch="$2"
+
+  if ! git -C "${dir}" apply --check "../patches/${patch}"; then
+    echo "Patch ${patch} did not apply cleanly in ${dir}; assuming it was already applied or needs refresh."
+    git -C "${dir}" apply --reverse --check "../patches/${patch}" >/dev/null 2>&1 || return 1
+    return 0
+  fi
+
+  git -C "${dir}" apply "../patches/${patch}"
+}
+
+zopen_config()
+{
+  cd ..
+
+  clone_module "${ZOPEN_STABLE_URL}" trivy "v${TRIVY_VERSION}"
+  clone_module https://github.com/mattn/go-sqlite3.git go-sqlite3 v1.14.24
+  clone_module https://github.com/knqyf263/go-rpmdb.git go-rpmdb v0.1.1
+  clone_module https://github.com/cheggaaa/pb.git pb v3.1.6
+  clone_module https://github.com/cheggaaa/pb.git pb-v1 v1.0.28
+  clone_module https://github.com/syndtr/goleveldb.git goleveldb 126854af5e6d
+  clone_module https://github.com/containerd/continuity.git continuity v0.4.5
+  clone_module https://github.com/containerd/containerd.git containerd-v1 v1.7.25
+  clone_module https://github.com/containerd/containerd.git containerd-v2 v2.0.2
+  clone_module https://github.com/go-git/go-git.git go-git v5.13.2
+  clone_module https://github.com/grpc/grpc-go.git grpc v1.70.0
+  clone_module https://github.com/owenrumney/squealer.git squealer v1.2.11
+  clone_module https://github.com/etcd-io/bbolt.git bbolt v1.4.0
+
+  apply_port_patch go-sqlite3 trivy-go-sqlite3-zos.gopatch || return 1
+  apply_port_patch go-rpmdb trivy-go-rpmdb-sqlite3.gopatch || return 1
+  apply_port_patch pb trivy-pb-v3-zos.gopatch || return 1
+  apply_port_patch pb-v1 trivy-pb-v1-zos.gopatch || return 1
+  apply_port_patch goleveldb trivy-goleveldb-zos.gopatch || return 1
+  apply_port_patch continuity trivy-continuity-zos.gopatch || return 1
+  apply_port_patch containerd-v1 trivy-containerd-v1-zos.gopatch || return 1
+  apply_port_patch containerd-v2 trivy-containerd-v2-zos.gopatch || return 1
+  apply_port_patch go-git trivy-go-git-zos.gopatch || return 1
+  apply_port_patch grpc trivy-grpc-zos.gopatch || return 1
+  apply_port_patch squealer trivy-squealer-zos.gopatch || return 1
+  apply_port_patch bbolt trivy-bbolt-zos.gopatch || return 1
+  apply_port_patch trivy trivy-sqlite3-driver.gopatch || return 1
+
+  # Create a goz-util wrapper that converts binder rc=4 (warnings-only) to rc=0.
+  # Without this, Go treats the non-zero exit as a linker failure even when the
+  # binary is fully produced.  The SYSDEFSD warning (rc=4) is spurious for an
+  # executable output and safe to suppress.
+  if [ -n "${GOROOT:-}" ] && [ -f "${GOROOT}/bin/goz-util" ]; then
+    mkdir -p "zos-wrappers"
+    printf '#!/bin/sh\n"%s" "$@"\nrc=$?\n[ $rc -eq 4 ] && rc=0\nexit $rc\n' \
+      "${GOROOT}/bin/goz-util" > "zos-wrappers/goz-util"
+    chmod +x "zos-wrappers/goz-util"
+    export PATH="$(pwd)/zos-wrappers:${PATH}"
+  fi
+
+  cd go-sqlite3
+  clang -shared -fvisibility=default -o sqlite3-binding.so sqlite3-binding.c \
     -DPATH_MAX=1023 \
     -D_AE_BIMODAL=1 \
     -D_ALL_SOURCE \
     -U_ENHANCED_ASCII_EXT \
     -D_ENHANCED_ASCII_EXT=0xFFFFFFFF \
-    -D_ISOC99_SOURCE \
+    -D_Export=extern \
     -D_LARGE_TIME_API \
     -D_OPEN_MSGQ_EXT \
-    -D_OPEN_SYS_FILE_EXT \
-    -D_OPEN_SYS_SOCK_EXT3 \
+    -D_OPEN_SYS_FILE_EXT=1 \
     -D_OPEN_SYS_SOCK_IPV6 \
     -D_UNIX03_SOURCE \
     -D_UNIX03_THREADS \
     -D_UNIX03_WITHDRAWN \
     -D_XOPEN_SOURCE=600 \
     -D_XOPEN_SOURCE_EXTENDED \
+    -D_XPLATFORM_SOURCE=1 \
+    -D__static_assert=static_assert \
+    -D_POSIX_C_SOURCE=200809L \
     -fasm \
     -fzos-le-char-mode=ascii \
     -isystem/usr/include \
     -m64
-  
-  # Tag the side deck file if it exists
-  if [ -f sqlite3-binding.x ]; then
-    chtag -tc1047 sqlite3-binding.x
-  fi
-  
-  # Replace ZOPEN-REPLACE-DIR placeholder with actual path (like murexport does)
-  GO_SQLITE3_DIR="${PWD}"
-  sed -i "s|ZOPEN-REPLACE-DIR|${GO_SQLITE3_DIR}|g" sqlite3.go
-  
-  # Clone and modify go-rpmdb to use mattn/go-sqlite3
-  cd ..
-  if [ ! -d "go-rpmdb" ]; then
-    git clone https://github.com/knqyf263/go-rpmdb.git
-  fi
-  
-  cd go-rpmdb
-  
-  # Replace glebarez/go-sqlite with mattn/go-sqlite3 in go.mod
-  sed -i 's|github.com/glebarez/go-sqlite v1.20.3|github.com/mattn/go-sqlite3 v1.14.24|g' go.mod
-  
-  # Add blank import for mattn/go-sqlite3 driver registration
-  if ! grep -q "github.com/mattn/go-sqlite3" pkg/sqlite3/sqlite3.go; then
-    sed -i '/import (/a\	_ "github.com/mattn/go-sqlite3"' pkg/sqlite3/sqlite3.go
-  fi
-  
-  # Initialize Go workspace (like murexport does) - this allows local go-sqlite3 and go-rpmdb to be used
-  cd ..
+  mv -f sqlite3-binding.c sqlite3-binding.c.ignore
 
-  git clone https://github.com/cheggaaa/pb.git
-  git clone https://github.com/syndtr/goleveldb.git
-  git clone https://github.com/containerd/continuity.git
-  git clone https://github.com/containerd/containerd.git 
-  git clone https://github.com/go-git/go-git/v5.git
+  GO_SQLITE3_DIR="$(pwd)"
+  sed -i "s#ZOPEN-REPLACE-DIR#${GO_SQLITE3_DIR}#g" sqlite3.go
 
+  cd ..
   rm -f go.work go.work.sum
-  go work init ./go-sqlite3 ./go-rpmdb ./trivy ./pb ./goleveldb ./continuity ./containerd ./v5 ./trivy
-  
-  # Apply go.mod changes to trivy BEFORE running wharf
-  cd ./trivy
-  
-  # Fix grpc module conflict by excluding the duplicate stats/opentelemetry module
-  if ! grep -q "exclude google.golang.org/grpc/stats/opentelemetry" go.mod; then
-    echo "" >> go.mod
-    echo "// Exclude duplicate grpc stats/opentelemetry module to resolve ambiguous import" >> go.mod
-    echo "exclude google.golang.org/grpc/stats/opentelemetry v0.0.0-20240907200651-3ffb98b2c93a" >> go.mod
-  fi
-  
-  # Add replace directive for local go-rpmdb
-  if ! grep -q "replace github.com/knqyf263/go-rpmdb" go.mod; then
-    echo "" >> go.mod
-    echo "// Replace go-rpmdb with local version that uses mattn/go-sqlite3 instead of glebarez/go-sqlite" >> go.mod
-    echo "replace github.com/knqyf263/go-rpmdb => ../go-rpmdb" >> go.mod
-  fi
-  
-  # Replace modernc.org/sqlite imports with mattn/go-sqlite3 in trivy source files
-  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' cmd/trivy/main.go
-  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' integration/integration_test.go
-  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' pkg/fanal/analyzer/analyzer_test.go
-  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' pkg/fanal/analyzer/language/java/jar/jar_test.go
-  sed -i 's|_ "modernc.org/sqlite"|_ "github.com/mattn/go-sqlite3"|g' pkg/fanal/test/integration/library_test.go
-}
+  mkdir -p "${GOTMPDIR}"
+  go work init \
+    ./go-sqlite3 \
+    ./go-rpmdb \
+    ./pb/v3 \
+    ./pb-v1 \
+    ./goleveldb \
+    ./continuity \
+    ./containerd-v1 \
+    ./containerd-v2 \
+    ./go-git \
+    ./grpc \
+    ./squealer \
+    ./bbolt \
+    ./trivy
 
-zopen_build()
-{
-  # Run wharf to patch z/OS platform-specific issues in dependencies
-  go mod tidy
+  cd trivy
+  mkdir -p "${GOTMPDIR}"
+  go mod download
   cd ..
-  wharf ./trivy/...
-  cd ./trivy
-  go mod tidy
-  
-  # Build trivy with CGO enabled
-  go build -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=${TRIVY_VERSION}" ./cmd/trivy
-}
 
-###
-### Required user-supplied functions
-###
-zopen_check_results()
-{
-  dir="$1"
-  pfx="$2"
-  chk="$1/$2_check.log"
-
-  echo "actualFailures:0"
-  echo "totalTests:1"
-  echo "expectedFailures:0"
-  echo "expectedTotalTests:1"
+  if [ "${TRIVY_RUN_WHARF:-0}" = "1" ]; then
+    wharf ./trivy/...
+  fi
 }
 
 zopen_install()
 {
-  mkdir -p "${ZOPEN_INSTALL_DIR}/bin"
-  cp ./trivy "${ZOPEN_INSTALL_DIR}/bin/"
+  if [ "$(basename "${PWD}")" = "trivy" ]; then
+    PORT_ROOT="$(cd .. && pwd)"
+  else
+    PORT_ROOT="${PWD}"
+  fi
+
+  # Re-install the goz-util wrapper so binder rc=4 (SYSDEFSD) warnings are
+  # treated as success.  The wrapper is also created in zopen_config but PATH
+  # may not carry across shell invocations.
+  if [ -n "${GOROOT:-}" ] && [ -f "${GOROOT}/bin/goz-util" ]; then
+    mkdir -p "${PORT_ROOT}/zos-wrappers"
+    printf '#!/bin/sh\n"%s" "$@"\nrc=$?\n[ $rc -eq 4 ] && rc=0\nexit $rc\n' \
+      "${GOROOT}/bin/goz-util" > "${PORT_ROOT}/zos-wrappers/goz-util"
+    chmod +x "${PORT_ROOT}/zos-wrappers/goz-util"
+    export PATH="${PORT_ROOT}/zos-wrappers:${PATH}"
+  fi
+
+  mkdir -p "${ZOPEN_INSTALL_DIR}/lib" "${GOBIN}" "${GOTMPDIR}"
+  cp "${PORT_ROOT}/go-sqlite3/sqlite3-binding.so" "${ZOPEN_INSTALL_DIR}/lib/"
+  cd "${PORT_ROOT}/trivy"
+  CGO_LDFLAGS_ALLOW='^((?:[^/]*/)*)(.*)\.x$' \
+    go build -buildvcs=false \
+      -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=${TRIVY_VERSION} -X=github.com/mattn/go-sqlite3.driverName=sqlite" \
+      -o "${GOBIN}/trivy" \
+      ./cmd/trivy
+}
+
+zopen_check_results()
+{
+  echo "actualFailures:0"
+  echo "totalTests:1"
+  echo "expectedFailures:0"
+  echo "expectedTotalTests:1"
 }
 
 zopen_get_version()
@@ -180,6 +228,23 @@ zopen_get_version()
 
 zopen_clean()
 {
-  rm -f ./trivy
-  rm -rf ../.wharf_cache ../wharf_port
+  rm -rf \
+    ../.wharf_cache \
+    ../wharf_port \
+    ../go.work \
+    ../go.work.sum \
+    ../go-tmpdir \
+    ../zos-wrappers \
+    ../go-sqlite3 \
+    ../go-rpmdb \
+    ../pb \
+    ../pb-v1 \
+    ../goleveldb \
+    ../continuity \
+    ../containerd-v1 \
+    ../containerd-v2 \
+    ../go-git \
+    ../grpc \
+    ../squealer \
+    ../bbolt
 }

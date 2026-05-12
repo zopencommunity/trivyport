@@ -1,0 +1,30 @@
+diff --git a/core/mount/mount_zos.go b/core/mount/mount_zos.go
+new file mode 100644
+index 0000000..0a21f9b
+--- /dev/null
++++ b/core/mount/mount_zos.go
+@@ -0,0 +1,10 @@
++//go:build zos
++
++package mount
++
++import "github.com/containerd/errdefs"
++
++// mount is not supported on z/OS
++func (m *Mount) mount(target string) error {
++	return errdefs.ErrNotImplemented
++}
+diff --git a/defaults/defaults_zos.go b/defaults/defaults_zos.go
+new file mode 100644
+index 0000000..7f75dea
+--- /dev/null
++++ b/defaults/defaults_zos.go
+@@ -0,0 +1,8 @@
++//go:build zos
++
++package defaults
++
++const (
++	DefaultRuntime     = ""
++	DefaultSnapshotter = "native"
++)

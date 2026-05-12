@@ -1,0 +1,98 @@
+diff --git a/fs/copy_unix.go b/fs/copy_unix.go
+index c9199ed..776d3b9 100644
+--- a/fs/copy_unix.go
++++ b/fs/copy_unix.go
+@@ -1,4 +1,4 @@
+-//go:build darwin || freebsd || openbsd || netbsd || dragonfly || solaris
++//go:build (darwin || freebsd || openbsd || netbsd || dragonfly || solaris) && !zos
+ 
+ /*
+    Copyright The containerd Authors.
+diff --git a/fs/copy_zos.go b/fs/copy_zos.go
+new file mode 100644
+index 0000000..c0b7f85
+--- /dev/null
++++ b/fs/copy_zos.go
+@@ -0,0 +1,26 @@
++//go:build zos
++
++package fs
++
++import (
++	"fmt"
++	"os"
++)
++
++func copyFileInfo(fi os.FileInfo, src, name string) error {
++	if (fi.Mode() & os.ModeSymlink) != os.ModeSymlink {
++		if err := os.Chmod(name, fi.Mode()); err != nil {
++			return fmt.Errorf("failed to chmod %s: %w", name, err)
++		}
++	}
++
++	if err := os.Chtimes(name, fi.ModTime(), fi.ModTime()); err != nil {
++		return fmt.Errorf("failed to chtimes %s: %w", name, err)
++	}
++
++	return nil
++}
++
++func copyXAttrs(dst, src string, excludes map[string]struct{}, errorHandler XAttrErrorHandler) error {
++	return nil
++}
+diff --git a/fs/stat_zos.go b/fs/stat_zos.go
+new file mode 100644
+index 0000000..7f659d3
+--- /dev/null
++++ b/fs/stat_zos.go
+@@ -0,0 +1,50 @@
++//go:build zos
++
++package fs
++
++import (
++	"fmt"
++	"io/fs"
++	"syscall"
++	"time"
++)
++
++func Atime(st fs.FileInfo) (time.Time, error) {
++	stSys, ok := st.Sys().(*syscall.Stat_t)
++	if !ok {
++		return time.Time{}, fmt.Errorf("expected st.Sys() to be *syscall.Stat_t, got %T", st.Sys())
++	}
++	return StatATimeAsTime(stSys), nil
++}
++
++func Ctime(st fs.FileInfo) (time.Time, error) {
++	stSys, ok := st.Sys().(*syscall.Stat_t)
++	if !ok {
++		return time.Time{}, fmt.Errorf("expected st.Sys() to be *syscall.Stat_t, got %T", st.Sys())
++	}
++	return time.Unix(stSys.Atim.Unix()), nil
++}
++
++func Mtime(st fs.FileInfo) (time.Time, error) {
++	stSys, ok := st.Sys().(*syscall.Stat_t)
++	if !ok {
++		return time.Time{}, fmt.Errorf("expected st.Sys() to be *syscall.Stat_t, got %T", st.Sys())
++	}
++	return time.Unix(stSys.Mtim.Unix()), nil
++}
++
++func StatAtime(st *syscall.Stat_t) syscall.Timespec {
++	return st.Atim
++}
++
++func StatCtime(st *syscall.Stat_t) syscall.Timespec {
++	return st.Ctim
++}
++
++func StatMtime(st *syscall.Stat_t) syscall.Timespec {
++	return st.Mtim
++}
++
++func StatATimeAsTime(st *syscall.Stat_t) time.Time {
++	return time.Unix(st.Atim.Unix())
++}

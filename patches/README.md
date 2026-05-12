@@ -1,90 +1,52 @@
 # Trivy z/OS Port Patches
 
-This directory contains patches required to port Trivy to z/OS.
+Trivy v0.60.0 imports `modernc.org/sqlite`, which pulls in `modernc.org/libc`.
+`modernc.org/libc` does not build on z/OS, so this port uses
+`github.com/mattn/go-sqlite3` through CGO instead.
 
-## Overview
+The build keeps upstream `go.mod` files intact where possible. `buildenv`
+clones the modules that need z/OS-specific treatment as siblings of the Trivy
+source tree, applies these `.gopatch` files, and creates a Go workspace with
+`go work`. The `.gopatch` extension is intentional: `zopen-build` should not
+auto-apply dependency patches to the Trivy source tree.
 
-The main challenge in porting Trivy to z/OS was the dependency on `modernc.org/sqlite`, which transitively depends on `modernc.org/libc` - a pure Go implementation of libc that does not support z/OS. The solution involved replacing the SQLite driver with `github.com/mattn/go-sqlite3`, which uses CGO and can be compiled with z/OS-specific flags.
+## Patch List
 
-## Patches
+### trivy-go-sqlite3-zos.gopatch
 
-### PR1-replace-modernc-sqlite-with-mattn.patch
+Applies to `github.com/mattn/go-sqlite3`.
 
-**Purpose**: Replace all `modernc.org/sqlite` imports with `github.com/mattn/go-sqlite3` in Trivy source code.
+Adds a z/OS-only cgo LDFLAGS entry for the SQLite side deck generated during
+the build. `buildenv` replaces `ZOPEN-REPLACE-DIR` with the local clone path
+after compiling `sqlite3-binding.c`.
 
-**Files Modified**:
-- `cmd/trivy/main.go`
-- `integration/integration_test.go`
-- `pkg/fanal/analyzer/analyzer_test.go`
-- `pkg/fanal/analyzer/language/java/jar/jar_test.go`
-- `pkg/fanal/test/integration/library_test.go`
+### trivy-go-rpmdb-sqlite3.gopatch
 
-**Changes**: Changed blank import from `_ "modernc.org/sqlite"` to `_ "github.com/mattn/go-sqlite3"` to register the CGO-based SQLite driver instead of the pure Go driver.
+Applies to `github.com/knqyf263/go-rpmdb`.
 
-### PR2-go-rpmdb-use-mattn-sqlite3.patch
+Replaces the `github.com/glebarez/go-sqlite` dependency with
+`github.com/mattn/go-sqlite3` and registers the CGO SQLite driver. This removes
+the transitive `modernc.org/sqlite` path from RPM DB handling.
 
-**Purpose**: Modify the `github.com/knqyf263/go-rpmdb` dependency to use `mattn/go-sqlite3` instead of `glebarez/go-sqlite`.
+### trivy-sqlite3-driver.gopatch
 
-**Files Modified**:
-- `go.mod` - Changed dependency from `github.com/glebarez/go-sqlite v1.20.3` to `github.com/mattn/go-sqlite3 v1.14.24`
-- `pkg/sqlite3/sqlite3.go` - Added blank import `_ "github.com/mattn/go-sqlite3"` for driver registration
+Applies to `github.com/aquasecurity/trivy`.
 
-**Rationale**: The `go-rpmdb` library originally used `glebarez/go-sqlite`, which is a wrapper around `modernc.org/sqlite`. By switching to `mattn/go-sqlite3`, we eliminate the transitive dependency on `modernc.org/libc`.
+Replaces Trivy's blank `modernc.org/sqlite` driver imports with
+`github.com/mattn/go-sqlite3`. The build sets
+`github.com/mattn/go-sqlite3.driverName=sqlite` with `-ldflags`, preserving the
+driver name expected by Trivy and go-rpmdb.
 
-## Build Configuration
+### Other dependency gopatches
 
-The `buildenv` file includes a `zopen_wharf()` function that:
+The remaining `.gopatch` files cover z/OS build-tag gaps seen during the Trivy
+build:
 
-1. **Clones and compiles go-sqlite3**:
-   - Clones `github.com/mattn/go-sqlite3` locally
-   - Compiles `sqlite3-binding.c` as a shared library with z/OS-specific flags
-   - Uses the ZOPEN-REPLACE-DIR placeholder pattern (similar to murexport)
-
-2. **Sets up Go workspace**:
-   - Creates a Go workspace with local copies of `go-sqlite3`, `go-rpmdb`, and `trivy`
-   - Applies go.mod modifications (replace directive and exclude directive)
-   - Runs wharf to apply z/OS platform patches
-
-3. **Key z/OS compilation flags**:
-   ```bash
-   -DPATH_MAX=1023
-   -D_AE_BIMODAL=1
-   -D_ALL_SOURCE
-   -U_ENHANCED_ASCII_EXT
-   -D_ENHANCED_ASCII_EXT=0xFFFFFFFF
-   -D_ISOC99_SOURCE
-   -D_LARGE_TIME_API
-   -D_OPEN_MSGQ_EXT
-   -D_OPEN_SYS_FILE_EXT
-   -D_OPEN_SYS_SOCK_EXT3
-   -D_OPEN_SYS_SOCK_IPV6
-   -D_UNIX03_SOURCE
-   -D_UNIX03_THREADS
-   -D_UNIX03_WITHDRAWN
-   -D_XOPEN_SOURCE=600
-   -D_XOPEN_SOURCE_EXTENDED
-   -fasm
-   -fzos-le-char-mode=ascii
-   -isystem/usr/include
-   -m64
-   ```
-
-## Application
-
-These patches are automatically applied during the build process via the `zopen_wharf()` function in `buildenv`. The function:
-
-1. Applies patches to the local `go-rpmdb` clone
-2. Applies patches to the `trivy` source tree
-3. Sets up the Go workspace with replace directives
-4. Runs wharf for additional z/OS platform patches
-
-## Status
-
-✅ **SQLite dependency issue resolved** - No more `modernc.org/libc` errors
-⏳ **Platform-specific compilation errors** - Remaining errors are standard z/OS porting issues that wharf should handle
-
-## References
-
-- Inspired by the murexport port's approach to handling SQLite on z/OS
-- Uses the same ZOPEN-REPLACE-DIR placeholder pattern for dynamic path replacement
-- Follows zopen porting best practices for CGO-based dependencies
+- `trivy-pb-v3-zos.gopatch`
+- `trivy-pb-v1-zos.gopatch`
+- `trivy-goleveldb-zos.gopatch`
+- `trivy-continuity-zos.gopatch`
+- `trivy-containerd-v1-zos.gopatch`
+- `trivy-go-git-zos.gopatch`
+- `trivy-grpc-zos.gopatch`
+- `trivy-squealer-zos.gopatch`

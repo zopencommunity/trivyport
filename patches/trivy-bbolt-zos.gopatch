@@ -1,0 +1,64 @@
+diff --git a/bolt_unix.go b/bolt_unix.go
+index 1234567..89abcde 100644
+--- a/bolt_unix.go
++++ b/bolt_unix.go
+@@ -1,4 +1,4 @@
+-//go:build !windows && !plan9 && !solaris && !aix && !android
++//go:build !windows && !plan9 && !solaris && !aix && !android && !zos
+
+ package bbolt
+
+diff --git a/bolt_zos.go b/bolt_zos.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/bolt_zos.go
+@@ -0,0 +1,48 @@
++//go:build zos
++
++package bbolt
++
++import (
++	"fmt"
++	"io"
++	"time"
++	"unsafe"
++)
++
++// flock acquires an advisory lock on a file descriptor.
++// z/OS: file locking omitted; vulnerability DB is accessed read-only.
++func flock(_ *DB, _ bool, _ time.Duration) error {
++	return nil
++}
++
++// funlock releases an advisory lock on a file descriptor.
++func funlock(_ *DB) error {
++	return nil
++}
++
++// mmap memory-maps a DB's data file.
++// z/OS: mmap is unreliable for large files; read the file into heap memory instead.
++func mmap(db *DB, sz int) error {
++	if !db.readOnly {
++		if err := db.file.Truncate(int64(sz)); err != nil {
++			return fmt.Errorf("file resize error: %w", err)
++		}
++	}
++	b := make([]byte, sz)
++	_, err := db.file.ReadAt(b, 0)
++	if err != nil && err != io.EOF {
++		return fmt.Errorf("read error: %w", err)
++	}
++	db.dataref = b
++	db.data = (*[maxMapSize]byte)(unsafe.Pointer(&b[0]))
++	db.datasz = sz
++	return nil
++}
++
++// munmap releases the in-memory database buffer.
++func munmap(db *DB) error {
++	db.dataref = nil
++	db.data = nil
++	db.datasz = 0
++	return nil
++}
