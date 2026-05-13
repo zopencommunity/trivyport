@@ -29,21 +29,15 @@ export ZOPEN_CLEAN="zopen_clean"
 
 zopen_init()
 {
-  if [ "$(basename "${PWD}")" = "trivy" ]; then
-    PORT_ROOT="$(cd .. && pwd)"
-  else
-    PORT_ROOT="${PWD}"
-  fi
-
+  # zopen-build calls zopen_init from ZOPEN_ROOT/trivy (the source checkout).
+  # Go one level up to PORT_ROOT (the workspace root that will hold go.work and
+  # the sibling module checkouts).
   export CGO_ENABLED=1
   export GOMAXPROCS=1
-  # Use clang as the C compiler so CGO external linking goes through clang's
-  # driver rather than the raw binder (ld).  Clang on z/OS knows how to set up
-  # SYSDEFSD when linking against DLL side decks (.x files).
   export CC="${CC:-clang}"
-  export GOPATH="${PORT_ROOT}/go-path"
+  export GOPATH="$(cd .. && pwd)/go-path"
   export GOMODCACHE="${GOPATH}/pkg/mod"
-  export GOTMPDIR="${PORT_ROOT}/go-tmpdir"
+  export GOTMPDIR="$(dirname "${GOPATH}")/go-tmpdir"
   mkdir -p "${GOTMPDIR}" "${GOMODCACHE}"
 
   if [ -n "${GOROOT:-}" ] && [ -d "${GOROOT}/bin" ]; then
@@ -188,31 +182,21 @@ zopen_config()
 
 zopen_install()
 {
-  # Derive PORT_ROOT from GOPATH (exported by zopen_init as ${PORT_ROOT}/go-path).
-  # This is more reliable than basename "${PWD}" because zopen may call install
-  # from a different working directory than the trivy source checkout.
-  PORT_ROOT="$(dirname "${GOPATH}")"
+  # GOPATH is exported by zopen_init as PORT_ROOT/go-path.
+  # cd to PORT_ROOT (workspace root containing go.work and sibling module dirs)
+  # regardless of what directory zopen called us from.
+  cd "$(dirname "${GOPATH}")"
 
-  # Re-install the goz-util wrapper so binder rc=4 (SYSDEFSD) warnings are
-  # treated as success.  The wrapper is also created in zopen_config but PATH
-  # may not carry across shell invocations.
   if [ -n "${GOROOT:-}" ] && [ -f "${GOROOT}/bin/goz-util" ]; then
-    mkdir -p "${PORT_ROOT}/zos-wrappers"
+    mkdir -p "zos-wrappers"
     printf '#!/bin/sh\n"%s" "$@"\nrc=$?\n[ $rc -eq 4 ] && rc=0\nexit $rc\n' \
-      "${GOROOT}/bin/goz-util" > "${PORT_ROOT}/zos-wrappers/goz-util"
-    chmod +x "${PORT_ROOT}/zos-wrappers/goz-util"
-    export PATH="${PORT_ROOT}/zos-wrappers:${PATH}"
+      "${GOROOT}/bin/goz-util" > "zos-wrappers/goz-util"
+    chmod +x "zos-wrappers/goz-util"
+    export PATH="$(pwd)/zos-wrappers:${PATH}"
   fi
 
   mkdir -p "${ZOPEN_INSTALL_DIR}/lib" "${GOBIN}" "${GOTMPDIR}"
-  cp "${PORT_ROOT}/go-sqlite3/sqlite3-binding.so" "${ZOPEN_INSTALL_DIR}/lib/"
-
-  # Run go build from PORT_ROOT (where go.work lives) so Go finds the workspace
-  # file immediately without upward directory search.  Using ./trivy/cmd/trivy
-  # instead of ./cmd/trivy avoids the "module not in workspace" error that
-  # occurs when Go is invoked from inside the trivy checkout but finds a go.work
-  # whose ./trivy entry doesn't resolve to the current directory.
-  cd "${PORT_ROOT}"
+  cp go-sqlite3/sqlite3-binding.so "${ZOPEN_INSTALL_DIR}/lib/"
   CGO_LDFLAGS_ALLOW='^((?:[^/]*/)*)(.*)\.x$' \
     go build -buildvcs=false \
       -ldflags="-s -w -X=github.com/aquasecurity/trivy/pkg/version/app.ver=${TRIVY_VERSION} -X=github.com/mattn/go-sqlite3.driverName=sqlite" \
