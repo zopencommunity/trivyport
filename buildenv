@@ -153,7 +153,10 @@ zopen_config()
   sed -i "s#ZOPEN-REPLACE-DIR#${GO_SQLITE3_DIR}#g" sqlite3.go
 
   cd ..
-  rm -f go.work go.work.sum
+  # Remove go.work from the current dir and one level up.  A previous build with
+  # a wrong PORT_ROOT may have left go.work in the parent directory; Go refuses
+  # to run 'go work init' inside an existing (parent) workspace.
+  rm -f go.work go.work.sum ../go.work ../go.work.sum
   mkdir -p "${GOTMPDIR}"
   go work init \
     ./go-sqlite3 \
