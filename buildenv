@@ -114,6 +114,8 @@ zopen_config()
   apply_port_patch squealer trivy-squealer-zos.gopatch || return 1
   apply_port_patch bbolt trivy-bbolt-zos.gopatch || return 1
   apply_port_patch trivy trivy-sqlite3-driver.gopatch || return 1
+  apply_port_patch trivy trivy-walker-zos.gopatch || return 1
+  apply_port_patch trivy trivy-secret-maxsize-zos.gopatch || return 1
 
   # Create a goz-util wrapper that converts binder rc=4 (warnings-only) to rc=0.
   # Without this, Go treats the non-zero exit as a linker failure even when the

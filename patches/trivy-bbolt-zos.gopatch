@@ -26,7 +26,7 @@ new file mode 100644
 index 0000000..1234567
 --- /dev/null
 +++ b/bolt_zos.go
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,183 @@
 +//go:build zos
 +
 +package bbolt
@@ -170,10 +170,28 @@ index 0000000..1234567
 +		if o+16 > len(page) {
 +			break
 +		}
++		flags := binary.LittleEndian.Uint32(page[o+0:])
++		pos := binary.LittleEndian.Uint32(page[o+4:])
++		ksize := binary.LittleEndian.Uint32(page[o+8:])
++		vsize := binary.LittleEndian.Uint32(page[o+12:])
 +		leSwapU32(page, o+0)  // flags
 +		leSwapU32(page, o+4)  // pos
 +		leSwapU32(page, o+8)  // ksize
 +		leSwapU32(page, o+12) // vsize
++		if flags&0x01 != 0 { // BucketLeafFlag: value is InBucket{root Pgid, sequence uint64}
++			valOff := o + int(pos) + int(ksize)
++			if valOff+16 <= len(page) {
++				leSwapU64(page, valOff)   // InBucket.root (Pgid)
++				leSwapU64(page, valOff+8) // InBucket.sequence (uint64)
++				root := binary.BigEndian.Uint64(page[valOff:])
++				if root == 0 && int(vsize) > 16 {
++					inlineEnd := valOff + int(vsize)
++					if inlineEnd <= len(page) {
++						byteswapPage(page[valOff+16 : inlineEnd])
++					}
++				}
++			}
++		}
 +		o += 16
 +	}
 +}

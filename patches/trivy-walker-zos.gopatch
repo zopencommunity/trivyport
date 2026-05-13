@@ -1,0 +1,43 @@
+diff --git a/pkg/fanal/walker/fs.go b/pkg/fanal/walker/fs.go
+index 1234567..89abcde 100644
+--- a/pkg/fanal/walker/fs.go
++++ b/pkg/fanal/walker/fs.go
+@@ -85,7 +85,7 @@ func (w *FS) onError(wrapped fs.WalkDirFunc) fs.WalkDirFunc {
+ 		case errors.Is(err, fs.SkipDir):
+ 			return fs.SkipDir
+ 		// Ignore permission errors
+-		case os.IsPermission(err):
++		case os.IsPermission(err) || isNotExistError(err):
+ 			return nil
+ 		case err != nil:
+ 			// halt traversal on any other error
+diff --git a/pkg/fanal/walker/fs_notzos.go b/pkg/fanal/walker/fs_notzos.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/pkg/fanal/walker/fs_notzos.go
+@@ -0,0 +1,7 @@
++//go:build !zos
++
++package walker
++
++// isNotExistError is always false on non-z/OS platforms; ENOENT during a walk
++// is a real error there.
++func isNotExistError(_ error) bool { return false }
+diff --git a/pkg/fanal/walker/fs_zos.go b/pkg/fanal/walker/fs_zos.go
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/pkg/fanal/walker/fs_zos.go
+@@ -0,0 +1,11 @@
++//go:build zos
++
++package walker
++
++import "os"
++
++// isNotExistError returns true on z/OS for ENOENT errors arising from
++// fdtopath failures on non-traversable directories (no execute bit).
++// z/OS maps EACCES path-traversal denials to ENOENT in this context, so
++// we treat them the same as permission errors and skip the affected entry.
++func isNotExistError(err error) bool { return os.IsNotExist(err) }
