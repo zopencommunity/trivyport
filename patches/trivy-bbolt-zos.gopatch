@@ -26,7 +26,7 @@ new file mode 100644
 index 0000000..1234567
 --- /dev/null
 +++ b/bolt_zos.go
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,185 @@
 +//go:build zos
 +
 +package bbolt
@@ -38,6 +38,8 @@ index 0000000..1234567
 +	"io"
 +	"time"
 +	"unsafe"
++
++	"go.etcd.io/bbolt/internal/common"
 +)
 +
 +// flock is a no-op on z/OS; the vulnerability DB is opened read-only.
@@ -60,7 +62,7 @@ index 0000000..1234567
 +	}
 +	byteswapDB(b, db.pageSize)
 +	db.dataref = b
-+	db.data = (*[maxMapSize]byte)(unsafe.Pointer(&b[0]))
++	db.data = (*[common.MaxMapSize]byte)(unsafe.Pointer(&b[0]))
 +	db.datasz = sz
 +	return nil
 +}

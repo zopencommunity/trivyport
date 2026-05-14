@@ -5,38 +5,12 @@ index 84d8879..a82e64c 100644
 @@ -12,7 +12,7 @@ import (
  	"github.com/aquasecurity/trivy/pkg/plugin"
  	"github.com/aquasecurity/trivy/pkg/types"
- 
+
 -	_ "modernc.org/sqlite" // sqlite driver for RPM DB and Java DB
 +	_ "github.com/mattn/go-sqlite3" // sqlite driver for RPM DB and Java DB
  )
- 
+
  func main() {
-diff --git a/integration/integration_test.go b/integration/integration_test.go
-index 21cdfe4..cb5560d 100644
---- a/integration/integration_test.go
-+++ b/integration/integration_test.go
-@@ -36,7 +36,7 @@ import (
- 	"github.com/aquasecurity/trivy/pkg/uuid"
- 	"github.com/aquasecurity/trivy/pkg/vex/repo"
- 
--	_ "modernc.org/sqlite"
-+	_ "github.com/mattn/go-sqlite3"
- )
- 
- var update = flag.Bool("update", false, "update golden files")
-diff --git a/pkg/fanal/analyzer/analyzer_test.go b/pkg/fanal/analyzer/analyzer_test.go
-index 0b56d00..079d24f 100644
---- a/pkg/fanal/analyzer/analyzer_test.go
-+++ b/pkg/fanal/analyzer/analyzer_test.go
-@@ -27,7 +27,7 @@ import (
- 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/pkg/apk"
- 	_ "github.com/aquasecurity/trivy/pkg/fanal/analyzer/repo/apk"
- 	_ "github.com/aquasecurity/trivy/pkg/fanal/handler/all"
--	_ "modernc.org/sqlite"
-+	_ "github.com/mattn/go-sqlite3"
- )
- 
- func TestAnalysisResult_Merge(t *testing.T) {
 diff --git a/pkg/fanal/analyzer/language/java/jar/jar_test.go b/pkg/fanal/analyzer/language/java/jar/jar_test.go
 index 58e7221..4143ab4 100644
 --- a/pkg/fanal/analyzer/language/java/jar/jar_test.go
@@ -44,22 +18,9 @@ index 58e7221..4143ab4 100644
 @@ -15,7 +15,7 @@ import (
  	"github.com/aquasecurity/trivy/pkg/javadb"
  	"github.com/aquasecurity/trivy/pkg/mapfs"
- 
+
 -	_ "modernc.org/sqlite"
 +	_ "github.com/mattn/go-sqlite3"
  )
- 
+
  func Test_javaLibraryAnalyzer_Analyze(t *testing.T) {
-diff --git a/pkg/fanal/test/integration/library_test.go b/pkg/fanal/test/integration/library_test.go
-index f655d45..8e457c3 100644
---- a/pkg/fanal/test/integration/library_test.go
-+++ b/pkg/fanal/test/integration/library_test.go
-@@ -25,7 +25,7 @@ import (
- 	"github.com/stretchr/testify/assert"
- 	"github.com/stretchr/testify/require"
- 
--	_ "modernc.org/sqlite"
-+	_ "github.com/mattn/go-sqlite3"
- )
- 
- var update = flag.Bool("update", false, "update golden files")

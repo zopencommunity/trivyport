@@ -1,5 +1,5 @@
 # bump: trivy-version /TRIVY_VERSION="(.*)"/ https://github.com/aquasecurity/trivy.git|semver:*
-TRIVY_VERSION="0.60.0"
+TRIVY_VERSION="0.70.0"
 
 ###
 ### Build control file for the trivy port
@@ -35,9 +35,10 @@ zopen_init()
   export CGO_ENABLED=1
   export GOMAXPROCS=1
   export CC="${CC:-clang}"
+  export GOEXPERIMENT=jsonv2
   export GOPATH="$(cd .. && pwd)/go-path"
   export GOMODCACHE="${GOPATH}/pkg/mod"
-  export GOTMPDIR="$(dirname "${GOPATH}")/go-tmpdir"
+  export GOTMPDIR="/tmp/trivyport-gotmp-${USER:-itodoro}"
   mkdir -p "${GOTMPDIR}" "${GOMODCACHE}"
 
   if [ -n "${GOROOT:-}" ] && [ -d "${GOROOT}/bin" ]; then
@@ -84,21 +85,20 @@ zopen_config()
   clone_module "${ZOPEN_STABLE_URL}" trivy "v${TRIVY_VERSION}"
   clone_module https://github.com/mattn/go-sqlite3.git go-sqlite3 v1.14.24
   clone_module https://github.com/knqyf263/go-rpmdb.git go-rpmdb v0.1.1
-  clone_module https://github.com/cheggaaa/pb.git pb v3.1.6
-  clone_module https://github.com/cheggaaa/pb.git pb-v1 v1.0.28
+  clone_module https://github.com/cheggaaa/pb.git pb v3.1.7
   clone_module https://github.com/syndtr/goleveldb.git goleveldb 126854af5e6d
   clone_module https://github.com/containerd/continuity.git continuity v0.4.5
-  clone_module https://github.com/containerd/containerd.git containerd-v1 v1.7.25
-  clone_module https://github.com/containerd/containerd.git containerd-v2 v2.0.2
-  clone_module https://github.com/go-git/go-git.git go-git v5.13.2
-  clone_module https://github.com/grpc/grpc-go.git grpc v1.70.0
-  clone_module https://github.com/owenrumney/squealer.git squealer v1.2.11
-  clone_module https://github.com/etcd-io/bbolt.git bbolt v1.4.0
+  clone_module https://github.com/containerd/containerd.git containerd-v1 v1.7.30
+  clone_module https://github.com/containerd/containerd.git containerd-v2 v2.2.2
+  clone_module https://github.com/go-git/go-git.git go-git v5.17.2
+  clone_module https://github.com/grpc/grpc-go.git grpc v1.79.3
+  clone_module https://github.com/owenrumney/squealer.git squealer v1.2.12
+  clone_module https://github.com/etcd-io/bbolt.git bbolt v1.4.3
+  clone_module https://github.com/moby/sys.git moby-sys user/v0.4.0
 
   apply_port_patch go-sqlite3 trivy-go-sqlite3-zos.gopatch || return 1
   apply_port_patch go-rpmdb trivy-go-rpmdb-sqlite3.gopatch || return 1
   apply_port_patch pb trivy-pb-v3-zos.gopatch || return 1
-  apply_port_patch pb-v1 trivy-pb-v1-zos.gopatch || return 1
   apply_port_patch goleveldb trivy-goleveldb-zos.gopatch || return 1
   apply_port_patch continuity trivy-continuity-zos.gopatch || return 1
   apply_port_patch containerd-v1 trivy-containerd-v1-zos.gopatch || return 1
@@ -107,6 +107,7 @@ zopen_config()
   apply_port_patch grpc trivy-grpc-zos.gopatch || return 1
   apply_port_patch squealer trivy-squealer-zos.gopatch || return 1
   apply_port_patch bbolt trivy-bbolt-zos.gopatch || return 1
+  apply_port_patch moby-sys trivy-moby-sys-user-zos.gopatch || return 1
   apply_port_patch trivy trivy-sqlite3-driver.gopatch || return 1
   apply_port_patch trivy trivy-walker-zos.gopatch || return 1
   apply_port_patch trivy trivy-secret-maxsize-zos.gopatch || return 1
@@ -159,15 +160,16 @@ zopen_config()
     ./go-sqlite3 \
     ./go-rpmdb \
     ./pb/v3 \
-    ./pb-v1 \
     ./goleveldb \
     ./continuity \
     ./containerd-v1 \
     ./containerd-v2 \
     ./go-git \
     ./grpc \
+    ./grpc/stats/opentelemetry \
     ./squealer \
     ./bbolt \
+    ./moby-sys/user \
     ./trivy
 
   cd trivy
@@ -229,7 +231,6 @@ zopen_clean()
     ../go-sqlite3 \
     ../go-rpmdb \
     ../pb \
-    ../pb-v1 \
     ../goleveldb \
     ../continuity \
     ../containerd-v1 \
@@ -237,5 +238,6 @@ zopen_clean()
     ../go-git \
     ../grpc \
     ../squealer \
-    ../bbolt
+    ../bbolt \
+    ../moby-sys
 }
