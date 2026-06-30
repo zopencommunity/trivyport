@@ -1,5 +1,5 @@
 # bump: trivy-version /TRIVY_VERSION="(.*)"/ https://github.com/aquasecurity/trivy.git|semver:*
-TRIVY_VERSION="0.70.0"
+TRIVY_VERSION="0.72.0"
 
 ###
 ### Build control file for the trivy port
